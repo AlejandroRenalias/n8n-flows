@@ -1,0 +1,220 @@
+{
+  "name": "Electricity prices tomorrow",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 18,
+              "triggerAtMinute": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        128,
+        0
+      ],
+      "id": "3b69b717-c3ff-4c6d-b579-80dc380fbf69",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.porssisahko.net/v1/latest-prices.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        320,
+        0
+      ],
+      "id": "3294eb04-01a6-4ea5-a941-d7e1841c25c9",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4-turbo",
+          "mode": "list",
+          "cachedResultName": "GPT-4-TURBO"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "=user",
+              "content": "=You are given *final* electricity price facts for Helsinki on {{ $json.date }}.\n\n- Lowest hourly price: {{ $json.minPrice }} c/kWh.\n- Time of lowest price (UTC): {{ $json.minHourUtc }}.\n- Highest hourly price: {{ $json.maxPrice }} c/kWh.\n- Time of highest price (UTC): {{ $json.maxHourUtc }}.\n- Any hour below 7 c/kWh: {{ $json.hasBelow7 }}.\n\nConvert the UTC times to local Helsinki time (Europe/Helsinki, UTC+2 in winter),\nand then write a short explanation in English:\n\n1. State the price range for the day.\n2. Say at what local time the price is lowest and what the price is.\n3. Say at what local time the price is highest and what the price is.\n4. Say clearly whether any hour is below 7 c/kWh.\n5. Add a 1–2 sentence advice on when to avoid heavy electricity use.\n6. Recommend the best local time window(s) for typical high‑consumption household tasks such as charging an electric car, running the washing machine and dryer, or using other major appliances, based only on when prices are lowest or clearly below the daily average.\n\nDo not change any of the numeric values. Only convert times from UTC to Helsinki local time.\nDo not guess or introduce new prices or times.\n\n"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        912,
+        0
+      ],
+      "id": "8f4d0b68-a148-42fe-8f31-59e8312f394e",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "QhbN2YrGBhQOSw5k",
+          "name": "Oscar OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const apiData = items[0].json.prices || [];\n\n// UTC -> Helsinki calendar date (YYYY-MM-DD)\nfunction toHelsinkiDate(dateStr) {\n  const d = new Date(dateStr);\n  const f = new Intl.DateTimeFormat('fi-FI', {\n    timeZone: 'Europe/Helsinki',\n    year: 'numeric',\n    month: '2-digit',\n    day: '2-digit',\n  });\n  const parts = f.formatToParts(d);\n  const get = (t) => parts.find(p => p.type === t).value;\n  return `${get('year')}-${get('month')}-${get('day')}`;\n}\n\n// Compute TOMORROW in Helsinki\nconst now = new Date();\nnow.setDate(now.getDate() + 1);\nconst tomorrowHki = toHelsinkiDate(now.toISOString());\nconst targetDate = tomorrowHki;\n\n// Keep only hours for tomorrow\nconst filtered = apiData.filter(p => toHelsinkiDate(p.startDate) === targetDate);\n\n// Sort by time\nfiltered.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));\n\n// Build lines \"startDate ; price c/kWh\"\nconst lines = filtered.map(p => `${p.startDate} ; ${p.price.toFixed(3)} c/kWh`);\n\nreturn [\n  {\n    json: {\n      targetDate,\n      rawLines: lines,\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        0
+      ],
+      "id": "ce927112-b635-4191-9b66-51f9b92fa6f9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input: items[0].json has { targetDate, rawLines }\nconst { targetDate, rawLines } = items[0].json;\n\n// Parse \"ISO ; price c/kWh\" -> { hour, price }\nconst hours = rawLines.map(line => {\n  const [iso, rest] = line.split(\" ; \");\n  const price = parseFloat(rest.replace(\" c/kWh\", \"\").trim());\n  return {\n    hourUtc: iso,\n    price,\n  };\n});\n\n// Find min/max\nlet min = hours[0];\nlet max = hours[0];\n\nfor (const h of hours) {\n  if (h.price < min.price) min = h;\n  if (h.price > max.price) max = h;\n}\n\n// Return a single clean JSON for the AI node\nreturn [\n  {\n    json: {\n      date: targetDate,\n      minHourUtc: min.hourUtc,\n      minPrice: min.price,\n      maxHourUtc: max.hourUtc,\n      maxPrice: max.price,\n      hasBelow7: hours.some(h => h.price < 7),\n    },\n  },\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        0
+      ],
+      "id": "bbf8d2e7-73dc-467c-8c63-13dfc43996b9",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "chatId": "6901788178",
+        "text": "={{ $json.output[0].content[0].text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1264,
+        -64
+      ],
+      "id": "2406c080-76dd-452e-9aee-c10ceeb12cc9",
+      "name": "Send a text message to me",
+      "webhookId": "338e503f-5483-4d6e-8d52-7922b7af23c3",
+      "credentials": {
+        "telegramApi": {
+          "id": "hZGwmDv2Vc9HLSve",
+          "name": "deco6"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=-5258141043",
+        "text": "={{ $json.output[0].content[0].text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1264,
+        80
+      ],
+      "id": "1f90e209-5e53-4d35-a79a-fdaafaf017e5",
+      "name": "Send a text message to group",
+      "webhookId": "338e503f-5483-4d6e-8d52-7922b7af23c3",
+      "credentials": {
+        "telegramApi": {
+          "id": "hZGwmDv2Vc9HLSve",
+          "name": "deco6"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Send a text message to me",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send a text message to group",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Helsinki",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "36e29aa8-1003-483d-b3c0-d1be0d207685",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9c61c3c4dbbf2408bc0cfef98e06ece62ec12d0a20ee916575ab4527cff5c68a"
+  },
+  "id": "xiGjqpGZWfl1t1Ct",
+  "tags": []
+}
