@@ -1,5 +1,5 @@
 {
-  "name": "Electricity prices tomorrow",
+  "name": "Electricity prices tomorrow flow",
   "nodes": [
     {
       "parameters": {
